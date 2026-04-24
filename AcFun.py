@@ -5,6 +5,13 @@ cron: 0 6 * * *
 new Env('AcFun');
 """
 
+import sys
+import io
+import json
+# 设置标准输出为UTF-8编码
+sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
+
 import os
 import re
 import time
@@ -130,27 +137,34 @@ class AcFun:
     def get_top_video(self):
         url = "https://www.acfun.cn/rest/pc-direct/rank/channel"
         data = {"channelId": "0", "rankPeriod": "DAY"}
-        try:
-            resp = self.session.post(url, data=data, timeout=10)
-            if resp.status_code == 200:
-                rank_list = resp.json().get("rankList", [])
-                if rank_list:
-                    return str(rank_list[0]["contentId"])
-        except:
-            pass
-        return "27259341"
+        for _ in range(3):  # 增加重试机制
+            try:
+                resp = self.session.post(url, data=data, timeout=10)
+                if resp.status_code == 200:
+                    rank_list = resp.json().get("rankList", [])
+                    if rank_list:
+                        return str(rank_list[0]["contentId"])
+            except Exception as e:
+                print(f"获取视频ID失败: {str(e)}")
+                time.sleep(1)
+        return "27259341"  # 仍然使用默认值作为最后的 fallback
 
     def sign_in(self):
         url = "https://www.acfun.cn/rest/pc-direct/user/signIn"
         try:
             resp = self.session.post(url, cookies=self.cookies_dict, timeout=10)
+            resp.raise_for_status()  # 检查HTTP状态码
             result = resp.json()
             if result.get("result") == 0:
                 return "签到成功"
             else:
-                return result.get("msg", "签到失败")
+                return f"签到失败: {result.get('msg', '未知错误')}"
+        except requests.exceptions.RequestException as e:
+            return f"签到网络异常: {str(e)}"
+        except ValueError as e:
+            return f"签到解析异常: {str(e)}"
         except Exception as e:
-            return f"签到异常: {str(e)}"
+            return f"签到其他异常: {str(e)}"
 
     def get_st_token(self):
         url = "https://id.app.acfun.cn/rest/web/token/get"
@@ -262,24 +276,25 @@ class AcFun:
         self.sio.write(f"用户名：{self.username}\n\n")
 
         try:
+            import random
             content_id = self.get_top_video()
-            time.sleep(1)
-
+            time.sleep(random.uniform(0.5, 1.5))  # 随机延迟
+    
             sign_msg = self.sign_in()
-            time.sleep(1)
-
+            time.sleep(random.uniform(0.5, 1.5))
+    
             token = self.get_st_token()
             like_msg = self.like(token, content_id)
-            time.sleep(1)
-
+            time.sleep(random.uniform(0.5, 1.5))    
+    
             danmu_msg = self.send_danmu(content_id)
-            time.sleep(1)
-
+            time.sleep(random.uniform(0.5, 1.5))
+    
             banana_msg = self.throw_banana(content_id)
-            time.sleep(1)
-
+            time.sleep(random.uniform(0.5, 1.5))
+    
             share_msg = self.share()
-            time.sleep(1)
+            time.sleep(random.uniform(0.5, 1.5))
 
             tasks = [sign_msg, like_msg, danmu_msg, banana_msg, share_msg]
             all_success = not any("失败" in t or "异常" in t for t in tasks)
@@ -306,17 +321,40 @@ class AcFun:
 
 
 # ==================== 主程序入口 ====================
+def load_cookies():
+    """加载Cookie配置"""
+    # 支持从环境变量或配置文件加载
+    cookies = []
+    # 从环境变量加载
+    env_cookie = os.getenv("ACFUN_COOKIE")
+    if env_cookie:
+        cookies.append(env_cookie)
+    # 从配置文件加载
+    config_file = "acfun_config.json"
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                if "cookies" in config:
+                    cookies.extend(config["cookies"])
+        except Exception as e:
+            print(f"加载配置文件失败: {str(e)}")
+    return cookies
+
 if __name__ == "__main__":
-    raw_cookie = os.getenv("ACFUN_COOKIE")
-    if not raw_cookie:
-        msg = "❌ 未设置环境变量 ACFUN_COOKIE"
+    cookies = load_cookies()
+    if not cookies:
+        msg = "❌ 未设置环境变量 ACFUN_COOKIE 或配置文件"
         print(msg)
         send("AcFun 签到失败", msg)
     else:
-        try:
-            acfun = AcFun(raw_cookie)
-            acfun.run()
-        except Exception as e:
-            msg = f"❌ 脚本初始化失败: {str(e)}"
-            print(msg)
-            send("AcFun 初始化失败", msg)
+        for i, cookie in enumerate(cookies):
+            print(f"\n【账号 {i+1}】")
+            try:
+                acfun = AcFun(cookie)
+                acfun.run()
+            except Exception as e:
+                msg = f"❌ 脚本初始化失败: {str(e)}"
+                print(msg)
+                send(f"AcFun 初始化失败 - 账号 {i+1}", msg)
+            time.sleep(2)  # 账号之间的延迟
